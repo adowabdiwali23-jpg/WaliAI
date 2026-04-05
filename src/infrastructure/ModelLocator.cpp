@@ -1,6 +1,7 @@
 #include "infrastructure/ModelLocator.h"
 #include "service/Logger.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 
@@ -12,51 +13,91 @@ ModelLocator::ModelLocator(const QString &runtimePath, QObject *parent)
 
 void ModelLocator::autoDetectModels()
 {
-    QDir modelsDir(m_runtimePath + "/models");
-    if (!modelsDir.exists()) {
-        modelsDir.mkpath(".");
-    }
-
-    // Look for GGUF files (llama.cpp models)
-    // Preferred model: Qwen2.5-Coder-7B-Instruct-abliterated-Q4_K_L.gguf
+    // Preferred model filename
     static const QString kPreferredModel = "Qwen2.5-Coder-7B-Instruct-abliterated-Q4_K_L.gguf";
 
-    QStringList ggufFiles = modelsDir.entryList({"*.gguf"}, QDir::Files);
-    if (!ggufFiles.isEmpty()) {
-        // Prioritize the preferred Qwen model if present
+    // Build a list of directories to search for models, in priority order:
+    //   1. Runtime models dir (~/.local/share/WaliAI/runtime/models/)
+    //   2. Repo-local models/ dir (next to binary or in source tree)
+    //   3. App binary directory
+    QStringList searchDirs;
+    QString runtimeModels = m_runtimePath + "/models";
+    QDir().mkpath(runtimeModels);
+    searchDirs << runtimeModels;
+
+    // Check for a models/ dir next to the application binary
+    QString appDir = QCoreApplication::applicationDirPath();
+    QString appModels = appDir + "/models";
+    if (QDir(appModels).exists() && !searchDirs.contains(appModels)) {
+        searchDirs << appModels;
+    }
+
+    // Check for a models/ dir relative to the source tree (e.g. when running
+    // from the build/ subdirectory of the repo)
+    QString parentModels = QDir(appDir + "/..").canonicalPath() + "/models";
+    if (QDir(parentModels).exists() && !searchDirs.contains(parentModels)) {
+        searchDirs << parentModels;
+    }
+
+    // Also check the binary directory itself (model placed alongside binary)
+    if (!searchDirs.contains(appDir)) {
+        searchDirs << appDir;
+    }
+
+    // Scan all search directories for GGUF files
+    for (const auto &dirPath : searchDirs) {
+        QDir dir(dirPath);
+        if (!dir.exists()) continue;
+
+        QStringList ggufFiles = dir.entryList({"*.gguf"}, QDir::Files);
+        if (ggufFiles.isEmpty()) continue;
+
         if (ggufFiles.contains(kPreferredModel)) {
-            m_llmModelPath = modelsDir.absoluteFilePath(kPreferredModel);
+            m_llmModelPath = dir.absoluteFilePath(kPreferredModel);
             Logger::instance().log("Found preferred LLM model: " + m_llmModelPath);
-        } else {
-            m_llmModelPath = modelsDir.absoluteFilePath(ggufFiles.first());
+            break;
+        } else if (m_llmModelPath.isEmpty()) {
+            // Use the first GGUF found as fallback, but keep searching for preferred
+            m_llmModelPath = dir.absoluteFilePath(ggufFiles.first());
             Logger::instance().log("Found LLM model: " + m_llmModelPath);
             Logger::instance().warning(
-                "Preferred model '" + kPreferredModel + "' not found. "
-                "Using '" + ggufFiles.first() + "' instead.");
+                "Preferred model '" + kPreferredModel + "' not found in " +
+                dirPath + ". Using '" + ggufFiles.first() + "' instead.");
         }
-    } else {
+    }
+
+    if (m_llmModelPath.isEmpty()) {
         Logger::instance().warning(
-            "No GGUF model found. Place '" + kPreferredModel +
-            "' in " + modelsDir.absolutePath() + "/");
+            "No GGUF model found in any search path. Place '" + kPreferredModel +
+            "' in one of: " + searchDirs.join(", "));
     }
 
-    // Look for Whisper models
-    QStringList whisperFiles = modelsDir.entryList({"ggml-*.bin", "whisper-*"}, QDir::Files);
-    if (!whisperFiles.isEmpty()) {
-        m_whisperModelPath = modelsDir.absoluteFilePath(whisperFiles.first());
-        Logger::instance().log("Found Whisper model: " + m_whisperModelPath);
-    }
+    // Look for Whisper and Piper models across all search directories
+    for (const auto &dirPath : searchDirs) {
+        QDir dir(dirPath);
+        if (!dir.exists()) continue;
 
-    // Look for Piper models
-    QStringList piperFiles = modelsDir.entryList({"*.onnx"}, QDir::Files);
-    if (!piperFiles.isEmpty()) {
-        m_piperModelPath = modelsDir.absoluteFilePath(piperFiles.first());
-        // Look for corresponding config
-        QString configName = QFileInfo(m_piperModelPath).baseName() + ".onnx.json";
-        if (QFileInfo::exists(modelsDir.absoluteFilePath(configName))) {
-            m_piperConfigPath = modelsDir.absoluteFilePath(configName);
+        // Whisper models (ggml-*.bin or whisper-*)
+        if (m_whisperModelPath.isEmpty()) {
+            QStringList whisperFiles = dir.entryList({"ggml-*.bin", "whisper-*"}, QDir::Files);
+            if (!whisperFiles.isEmpty()) {
+                m_whisperModelPath = dir.absoluteFilePath(whisperFiles.first());
+                Logger::instance().log("Found Whisper model: " + m_whisperModelPath);
+            }
         }
-        Logger::instance().log("Found Piper model: " + m_piperModelPath);
+
+        // Piper models (*.onnx)
+        if (m_piperModelPath.isEmpty()) {
+            QStringList piperFiles = dir.entryList({"*.onnx"}, QDir::Files);
+            if (!piperFiles.isEmpty()) {
+                m_piperModelPath = dir.absoluteFilePath(piperFiles.first());
+                QString configName = QFileInfo(m_piperModelPath).baseName() + ".onnx.json";
+                if (QFileInfo::exists(dir.absoluteFilePath(configName))) {
+                    m_piperConfigPath = dir.absoluteFilePath(configName);
+                }
+                Logger::instance().log("Found Piper model: " + m_piperModelPath);
+            }
+        }
     }
 }
 

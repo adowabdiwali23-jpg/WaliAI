@@ -13,8 +13,8 @@ SandboxManager::SandboxManager(const QString &runtimePath, QObject *parent)
     ensureDirectories();
 
     m_guard = new FileSystemGuard(runtimePath, this);
-    m_executor = new CommandExecutor(*m_guard, workspacePath(), this);
     m_permissions = new PermissionManager(this);
+    m_executor = new CommandExecutor(*m_guard, *m_permissions, workspacePath(), this);
 
     connect(m_executor, &CommandExecutor::executionFinished,
             this, [this](const CommandResult &result) {

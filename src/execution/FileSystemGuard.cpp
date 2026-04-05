@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 FileSystemGuard::FileSystemGuard(const QString &sandboxRoot, QObject *parent)
     : QObject(parent), m_sandboxRoot(QDir(sandboxRoot).canonicalPath())
@@ -40,19 +41,40 @@ bool FileSystemGuard::isCommandSafe(const QString &command) const
 {
     QString cmd = command.trimmed().toLower();
 
-    // Block dangerous commands
-    QStringList dangerous = {
+    // Block shell metacharacters to prevent command chaining / injection.
+    // Commands are executed via /bin/sh -c, so these are dangerous.
+    static const QStringList metacharacters = {
+        ";", "&&", "||", "|", "`", "$(", ">", ">>", "<"
+    };
+    for (const auto &mc : metacharacters) {
+        if (cmd.contains(mc)) {
+            Logger::instance().warning("Shell metacharacter blocked in command: " + command);
+            return false;
+        }
+    }
+
+    // Block dangerous commands — check anywhere in the string, not just the start
+    static const QStringList dangerous = {
         "sudo", "su", "passwd", "shutdown", "reboot", "poweroff",
         "halt", "init", "systemctl", "service", "mount", "umount",
         "fdisk", "mkfs", "dd", "chown", "chmod 777", "chroot",
-        "kill", "killall", "pkill"
+        "kill -9", "killall", "pkill"
     };
 
     for (const auto &d : dangerous) {
-        if (cmd.startsWith(d + " ") || cmd == d) {
+        // Check if the dangerous command appears as a word boundary in the input
+        if (cmd == d || cmd.startsWith(d + " ") || cmd.contains(" " + d + " ") ||
+            cmd.contains(" " + d)) {
             Logger::instance().warning("Dangerous command blocked: " + command);
             return false;
         }
+    }
+
+    // Block dangerous rm patterns targeting absolute paths
+    QRegularExpression dangerousRm("\\brm\\s+(-[a-z]*r[a-z]*\\s+)?/");
+    if (dangerousRm.match(cmd).hasMatch()) {
+        Logger::instance().warning("Dangerous rm pattern blocked: " + command);
+        return false;
     }
 
     // Block path traversal in commands

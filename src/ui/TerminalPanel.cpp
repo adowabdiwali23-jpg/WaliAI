@@ -1,6 +1,8 @@
 #include "ui/TerminalPanel.h"
 #include "execution/SandboxManager.h"
 #include "execution/CommandExecutor.h"
+#include "execution/PermissionManager.h"
+#include "service/Logger.h"
 
 #include <QScrollBar>
 
@@ -71,6 +73,55 @@ void TerminalPanel::onCommandEntered()
     appendOutput("$ " + command);
     m_input->clear();
 
+    // All commands require explicit user permission before execution.
+    if (!askUserPermission(command)) {
+        appendOutput("[Cancelled] Command was not approved by the user.");
+        Logger::instance().log("Command cancelled by user: " + command);
+        return;
+    }
+
+    runCommand(command);
+    emit commandSubmitted(command);
+}
+
+bool TerminalPanel::askUserPermission(const QString &command)
+{
+    // Check if the command is whitelisted
+    bool whitelisted = m_sandbox.executor().isCommandWhitelisted(command);
+    // Check if it requires extra confirmation (e.g. rm -rf, chmod)
+    bool needsConfirmation = m_sandbox.executor().requiresPermission(command);
+
+    QString title = needsConfirmation ? "Confirm Dangerous Command" : "Confirm Command Execution";
+    QString message;
+
+    if (!whitelisted) {
+        message = "The following command is <b>not in the allow-list</b> and "
+                  "cannot be executed:<br><br><code>" + command.toHtmlEscaped() +
+                  "</code><br><br>Allowed commands: " +
+                  m_sandbox.executor().whitelist().join(", ");
+        QMessageBox::warning(this, "Command Blocked", message);
+        Logger::instance().warning("Command not whitelisted: " + command);
+        return false;
+    }
+
+    if (needsConfirmation) {
+        message = "This command may modify or delete files:<br><br>"
+                  "<code>" + command.toHtmlEscaped() + "</code><br><br>"
+                  "Are you sure you want to execute it?";
+    } else {
+        message = "Execute the following command?<br><br>"
+                  "<code>" + command.toHtmlEscaped() + "</code>";
+    }
+
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, title, message,
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+    return reply == QMessageBox::Yes;
+}
+
+void TerminalPanel::runCommand(const QString &command)
+{
     CommandResult result = m_sandbox.executor().execute(command);
     if (!result.output.isEmpty()) {
         appendOutput(result.output);
@@ -78,8 +129,6 @@ void TerminalPanel::onCommandEntered()
     if (!result.error.isEmpty()) {
         appendOutput("[Error] " + result.error);
     }
-
-    emit commandSubmitted(command);
 }
 
 void TerminalPanel::appendOutput(const QString &text)

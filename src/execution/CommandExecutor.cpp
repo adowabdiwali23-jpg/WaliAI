@@ -1,13 +1,14 @@
 #include "execution/CommandExecutor.h"
 #include "execution/FileSystemGuard.h"
+#include "execution/PermissionManager.h"
 #include "service/Logger.h"
 
 #include <QProcess>
 #include <QDir>
 
-CommandExecutor::CommandExecutor(FileSystemGuard &guard, const QString &workDir,
-                                 QObject *parent)
-    : QObject(parent), m_guard(guard), m_workDir(workDir)
+CommandExecutor::CommandExecutor(FileSystemGuard &guard, PermissionManager &permissions,
+                                 const QString &workDir, QObject *parent)
+    : QObject(parent), m_guard(guard), m_permissions(permissions), m_workDir(workDir)
 {
     m_whitelist = {
         "ls", "cat", "echo", "mkdir", "rm", "cp", "mv",
@@ -34,13 +35,36 @@ QString CommandExecutor::extractBaseCommand(const QString &command) const
     return base;
 }
 
+bool CommandExecutor::requiresPermission(const QString &command) const
+{
+    return m_permissions.requiresConfirmation(command);
+}
+
+QStringList CommandExecutor::whitelist() const
+{
+    return m_whitelist;
+}
+
+void CommandExecutor::setWhitelist(const QStringList &list)
+{
+    m_whitelist = list;
+}
+
 CommandResult CommandExecutor::execute(const QString &command, int timeoutMs)
 {
     CommandResult result;
 
-    // Safety check
+    // Safety check: block dangerous commands and shell metacharacters
     if (!m_guard.isCommandSafe(command)) {
         result.error = "Command blocked by safety guard: " + command;
+        result.exitCode = -1;
+        Logger::instance().warning(result.error);
+        return result;
+    }
+
+    // Blocked-command check via PermissionManager
+    if (m_permissions.isDangerousCommand(command)) {
+        result.error = "Command blocked (unsafe): " + command;
         result.exitCode = -1;
         Logger::instance().warning(result.error);
         return result;
@@ -53,6 +77,8 @@ CommandResult CommandExecutor::execute(const QString &command, int timeoutMs)
         Logger::instance().warning(result.error);
         return result;
     }
+
+    Logger::instance().log("Executing command: " + command);
 
     QProcess process;
     process.setWorkingDirectory(m_workDir);
@@ -78,6 +104,14 @@ CommandResult CommandExecutor::execute(const QString &command, int timeoutMs)
 
 void CommandExecutor::executeAsync(const QString &command, int timeoutMs)
 {
+    CommandResult result = execute(command, timeoutMs);
+    emit executionFinished(result);
+}
+
+void CommandExecutor::executeApproved(const QString &command, int timeoutMs)
+{
+    // This is called after user has granted permission, so execute directly.
+    Logger::instance().log("User approved command: " + command);
     CommandResult result = execute(command, timeoutMs);
     emit executionFinished(result);
 }

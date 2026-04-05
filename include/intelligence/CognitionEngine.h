@@ -49,4 +49,12 @@ private:
     MemoryService &m_memory;
     HiddenBrowser &m_browser;
     IntentClassifier *m_intentClassifier = nullptr;
+
+    // Pending state for async web-context fetches
+    QString m_pendingUserMessage;
+    const CognitiveState *m_pendingCognitive = nullptr;
+    const PersonalizationState *m_pendingPersonalization = nullptr;
+    const AgentState *m_pendingAgent = nullptr;
+    QString m_pendingConversationContext;
+    QString m_pendingMemoryContext;
 };

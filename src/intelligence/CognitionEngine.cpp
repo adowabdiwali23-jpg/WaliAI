@@ -70,8 +70,48 @@ void CognitionEngine::processRequest(const QString &userMessage,
     if (personalization.memoryEnabled()) {
         memoryContext = memory.buildContextBlock(userMessage, 5);
     }
+
+    // Web context: fetch via HiddenBrowser when Search or Research is enabled.
+    // This is a local HTTP fetch — no external cloud API is used.
     QString webContext;
-    // Web context handled asynchronously if search/research enabled
+    if (cognitive.searchEnabled() || cognitive.researchEnabled()) {
+        Logger::instance().log("Web context requested (search=" +
+            QString::number(cognitive.searchEnabled()) + ", research=" +
+            QString::number(cognitive.researchEnabled()) + ")");
+
+        // Use a one-shot blocking fetch so the context is available for the prompt.
+        // HiddenBrowser::searchWeb uses DuckDuckGo’s HTML endpoint locally.
+        m_pendingUserMessage = userMessage;
+        m_pendingCognitive = &cognitive;
+        m_pendingPersonalization = &personalization;
+        m_pendingAgent = &agent;
+        m_pendingConversationContext = conversationContext;
+        m_pendingMemoryContext = memoryContext;
+
+        // Connect once for this request — use member pointers (already stored
+        // above) so the lambda does not capture dangling stack references.
+        QMetaObject::Connection conn;
+        conn = connect(&browser, &HiddenBrowser::pageFetched, this,
+            [this, conn](const WebResult &result) mutable {
+                disconnect(conn);
+                QString webCtx;
+                if (result.success && !result.content.isEmpty()) {
+                    webCtx = result.content.left(4000);
+                    Logger::instance().log("Web context fetched: " +
+                        QString::number(webCtx.length()) + " chars from " + result.url);
+                } else {
+                    Logger::instance().warning("Web fetch failed: " + result.error);
+                }
+                QString prompt = buildPrompt(m_pendingUserMessage, *m_pendingCognitive,
+                                             *m_pendingPersonalization, *m_pendingAgent,
+                                             m_pendingConversationContext, m_pendingMemoryContext, webCtx);
+                m_model.generate(prompt, m_pendingPersonalization->maxTokens(),
+                                 m_pendingPersonalization->temperature());
+            });
+
+        browser.searchWeb(userMessage);
+        return;
+    }
 
     QString prompt = buildPrompt(userMessage, cognitive, personalization, agent,
                                  conversationContext, memoryContext, webContext);
@@ -106,8 +146,12 @@ QString CognitionEngine::buildPrompt(const QString &userMessage,
     }
 
     if (cognitive.deepThinkEnabled()) {
-        systemPrompt += "\nYou are in DeepThink mode. Analyze thoroughly, consider multiple angles, "
-                        "and provide detailed reasoning before giving your answer.";
+        systemPrompt += "\nYou are in DeepThink mode. Before answering:\n"
+                        "1. Identify all assumptions and constraints.\n"
+                        "2. Consider at least two alternative approaches.\n"
+                        "3. Evaluate trade-offs (performance, complexity, maintainability).\n"
+                        "4. Provide your recommended solution with clear reasoning.\n"
+                        "Think step-by-step, show your work, and be thorough.";
     }
 
     // Build ChatML format for Qwen model

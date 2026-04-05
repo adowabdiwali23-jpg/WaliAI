@@ -21,13 +21,16 @@ void ModelInference::generate(const QString &prompt, int maxTokens, double tempe
     QString llamaBinary = findLlamaBinary();
     QString modelPath = m_locator.llmModelPath();
 
-    if (modelPath.isEmpty()) {
-        QString msg = "[Wali AI] No model file found. Please place a GGUF model in: " +
-                      m_locator.llmModelPath().section('/', 0, -2);
+    if (modelPath.isEmpty() || !QFileInfo::exists(modelPath)) {
+        QString msg = "[Wali AI] No model file found. Place a GGUF model in "
+                      "~/.local/share/WaliAI/runtime/models/ or next to the binary.";
+        Logger::instance().warning(msg);
         emit tokenGenerated(msg);
         emit generationFinished(msg);
         return;
     }
+
+    Logger::instance().log("Model path resolved: " + modelPath);
 
     if (llamaBinary.isEmpty()) {
         // Stub mode: echo response

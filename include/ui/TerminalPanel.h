@@ -7,6 +7,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 
 class SandboxManager;
 
@@ -26,6 +27,8 @@ signals:
 private:
     void setupUi();
     void onCommandEntered();
+    bool askUserPermission(const QString &command);
+    void runCommand(const QString &command);
 
     SandboxManager &m_sandbox;
     QTextEdit *m_output = nullptr;

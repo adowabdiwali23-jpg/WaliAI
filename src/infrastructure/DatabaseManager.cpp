@@ -379,7 +379,14 @@ QString DatabaseManager::loadSetting(const QString &key, const QString &defaultV
 void DatabaseManager::loadSettings(PersonalizationState &state)
 {
     state.setUserName(loadSetting("user_name", "User"));
-    state.setSystemPrompt(loadSetting("system_prompt", "You are Wali, a helpful AI assistant."));
+    state.setSystemPrompt(loadSetting("system_prompt",
+        "You are Wali, a sovereign AI coding assistant running fully offline. "
+        "You are an expert-level software engineer and computer scientist. "
+        "When answering questions, provide thorough, well-structured responses with "
+        "concrete examples and clear reasoning. For coding tasks, write production-quality "
+        "code with proper error handling, types, and documentation. For diagnostics, "
+        "analyze root causes systematically. Always explain your reasoning step by step "
+        "when solving complex problems. Be concise but never sacrifice accuracy or depth."));
     state.setTheme(loadSetting("theme", "dark"));
     state.setMaxTokens(loadSetting("max_tokens", "2048").toInt());
     state.setTemperature(loadSetting("temperature", "0.7").toDouble());

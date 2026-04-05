@@ -3,6 +3,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QRegularExpression>
 
 FileSystemGuard::FileSystemGuard(const QString &sandboxRoot, QObject *parent)
     : QObject(parent), m_sandboxRoot(QDir(sandboxRoot).canonicalPath())
@@ -40,7 +41,24 @@ bool FileSystemGuard::isCommandSafe(const QString &command) const
 {
     QString cmd = command.trimmed().toLower();
 
-    // Block dangerous commands
+    // Block shell metacharacters that enable command injection.
+    // Commands are executed via /bin/sh -c, so characters like ; && || |
+    // backticks and $() allow chaining arbitrary commands after a
+    // whitelisted prefix, completely bypassing the safety checks.
+    QStringList shellMetachars = {
+        ";", "&&", "||", "|", "`", "$(", ">", ">>", "<"
+    };
+    for (const auto &meta : shellMetachars) {
+        if (cmd.contains(meta)) {
+            Logger::instance().warning(
+                "Shell metacharacter blocked (command injection risk): " + command);
+            return false;
+        }
+    }
+
+    // Block dangerous commands anywhere in the string, not just at the
+    // start.  A command like "echo hi; sudo rm -rf /" would previously
+    // slip through because the startsWith check only saw "echo".
     QStringList dangerous = {
         "sudo", "su", "passwd", "shutdown", "reboot", "poweroff",
         "halt", "init", "systemctl", "service", "mount", "umount",
@@ -49,10 +67,23 @@ bool FileSystemGuard::isCommandSafe(const QString &command) const
     };
 
     for (const auto &d : dangerous) {
-        if (cmd.startsWith(d + " ") || cmd == d) {
+        if (cmd.startsWith(d + " ") || cmd == d
+            || cmd.contains(" " + d + " ") || cmd.endsWith(" " + d)) {
             Logger::instance().warning("Dangerous command blocked: " + command);
             return false;
         }
+    }
+
+    // Block dangerous rm patterns (rm -rf /, rm -r /, etc.)
+    // rm is whitelisted for normal use, but recursive operations on
+    // root or absolute paths outside the sandbox must be prevented.
+    QRegularExpression dangerousRm(
+        "\\brm\\s+(-[a-z]*r[a-z]*\\s+)?/",
+        QRegularExpression::CaseInsensitiveOption);
+    if (dangerousRm.match(cmd).hasMatch()) {
+        Logger::instance().warning(
+            "Dangerous rm with absolute path blocked: " + command);
+        return false;
     }
 
     // Block path traversal in commands

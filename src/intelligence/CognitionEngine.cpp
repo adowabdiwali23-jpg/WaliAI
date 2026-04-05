@@ -146,8 +146,12 @@ QString CognitionEngine::buildPrompt(const QString &userMessage,
     }
 
     if (cognitive.deepThinkEnabled()) {
-        systemPrompt += "\nYou are in DeepThink mode. Analyze thoroughly, consider multiple angles, "
-                        "and provide detailed reasoning before giving your answer.";
+        systemPrompt += "\nYou are in DeepThink mode. Before answering:\n"
+                        "1. Identify all assumptions and constraints.\n"
+                        "2. Consider at least two alternative approaches.\n"
+                        "3. Evaluate trade-offs (performance, complexity, maintainability).\n"
+                        "4. Provide your recommended solution with clear reasoning.\n"
+                        "Think step-by-step, show your work, and be thorough.";
     }
 
     // Build ChatML format for Qwen model
